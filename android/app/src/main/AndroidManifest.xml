@@ -1,8 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Permisos necesarios para Google Maps -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    
     <application
         android:label="innova_hack"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- API Key de Google Maps -->
+        <meta-data android:name="com.google.android.geo.API_KEY"
+               android:value="AIzaSyDFOyfSTfAVXPB8fs1RakGk0BR-6vcTaDE"/>
         <activity
             android:name=".MainActivity"
             android:exported="true"
