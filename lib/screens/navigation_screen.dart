@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'dart:async';
+import 'dart:convert';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/route_model.dart';
 
 class NavigationScreen extends StatefulWidget {
@@ -22,11 +24,20 @@ class _NavigationScreenState extends State<NavigationScreen> {
   bool _hasLocationPermission = false;
   String _statusMessage = 'Cargando ubicación...';
   final DraggableScrollableController _sheetController = DraggableScrollableController();
+  
+  // WebSocket tracking
+  WebSocketChannel? _wsChannel;
+  bool _isWsConnected = false;
+  String _lastSyncTime = 'Sin sincronizar';
+  Timer? _locationTimer;
+  bool _isTrackingPaused = false;
+  static const String _userId = '6918c21792cd6492dbd79515'; // Agustin Apaza
 
   @override
   void initState() {
     super.initState();
     _checkPermissionsAndStartTracking();
+    _connectWebSocket();
   }
 
   @override
@@ -34,6 +45,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
     _positionStream?.cancel();
     _mapController?.dispose();
     _sheetController.dispose();
+    _locationTimer?.cancel();
+    _wsChannel?.sink.close();
     super.dispose();
   }
 
@@ -136,6 +149,119 @@ class _NavigationScreenState extends State<NavigationScreen> {
       final minutes = (seconds / 60).round();
       return '$minutes min';
     }
+  }
+
+  // ============ WEBSOCKET TRACKING ============
+  
+  void _connectWebSocket() {
+    try {
+      final wsUrl = 'ws://innovahack.onrender.com/ws/tracker/$_userId';
+      _wsChannel = WebSocketChannel.connect(Uri.parse(wsUrl));
+      
+      // Escuchar mensajes del servidor
+      _wsChannel!.stream.listen(
+        (message) {
+          _handleWebSocketMessage(message);
+        },
+        onError: (error) {
+          print('WebSocket error: $error');
+          setState(() {
+            _isWsConnected = false;
+          });
+          _reconnectWebSocket();
+        },
+        onDone: () {
+          print('WebSocket closed');
+          setState(() {
+            _isWsConnected = false;
+          });
+          _reconnectWebSocket();
+        },
+      );
+      
+      setState(() {
+        _isWsConnected = true;
+      });
+      
+      // Iniciar timer de envío de ubicación cada 5 segundos
+      _startLocationTimer();
+      
+    } catch (e) {
+      print('Error connecting WebSocket: $e');
+      setState(() {
+        _isWsConnected = false;
+      });
+    }
+  }
+
+  void _handleWebSocketMessage(dynamic message) {
+    try {
+      final data = json.decode(message);
+      print('WebSocket received: $data');
+      
+      if (data['type'] == 'connected') {
+        print('WebSocket connected: ${data['message']}');
+      } else if (data['type'] == 'location_received') {
+        setState(() {
+          _lastSyncTime = _formatCurrentTime();
+        });
+      }
+    } catch (e) {
+      print('Error parsing WebSocket message: $e');
+    }
+  }
+
+  void _startLocationTimer() {
+    _locationTimer?.cancel();
+    _locationTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      if (!_isTrackingPaused && _currentPosition != null && _isWsConnected) {
+        _sendLocationToServer();
+      }
+    });
+  }
+
+  void _sendLocationToServer() {
+    if (_wsChannel == null || _currentPosition == null) return;
+    
+    try {
+      final locationData = {
+        'type': 'location_update',
+        'lat': _currentPosition!.latitude,
+        'lng': _currentPosition!.longitude,
+      };
+      
+      _wsChannel!.sink.add(json.encode(locationData));
+      print('Location sent: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
+      
+    } catch (e) {
+      print('Error sending location: $e');
+    }
+  }
+
+  void _reconnectWebSocket() {
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted && !_isWsConnected) {
+        print('Attempting to reconnect WebSocket...');
+        _connectWebSocket();
+      }
+    });
+  }
+
+  void _toggleTracking() {
+    setState(() {
+      _isTrackingPaused = !_isTrackingPaused;
+    });
+    
+    if (_isTrackingPaused) {
+      print('Tracking paused');
+    } else {
+      print('Tracking resumed');
+    }
+  }
+
+  String _formatCurrentTime() {
+    final now = DateTime.now();
+    return '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
   }
 
   @override
@@ -283,6 +409,38 @@ class _NavigationScreenState extends State<NavigationScreen> {
               backgroundColor: Colors.grey[300],
               valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF148040)),
             ),
+          ),
+          
+          // Indicador de conexión WebSocket
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: _isWsConnected ? Colors.green : Colors.red,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _isWsConnected ? 'Tracking activo' : 'Desconectado',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: _isWsConnected ? Colors.green[700] : Colors.red[700],
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                _lastSyncTime,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -440,6 +598,35 @@ class _NavigationScreenState extends State<NavigationScreen> {
                       ),
                     ),
 
+                    const SizedBox(height: 16),
+
+                    // Botón "PAUSAR/REANUDAR TRACKING"
+                    SizedBox(
+                      width: double.infinity,
+                      height: 56,
+                      child: OutlinedButton.icon(
+                        onPressed: _toggleTracking,
+                        icon: Icon(_isTrackingPaused ? Icons.play_arrow : Icons.pause),
+                        label: Text(
+                          _isTrackingPaused ? 'REANUDAR TRACKING' : 'PAUSAR TRACKING',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(
+                            color: _isTrackingPaused ? Colors.green : Colors.orange,
+                            width: 2,
+                          ),
+                          foregroundColor: _isTrackingPaused ? Colors.green : Colors.orange,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ),
+
                     const SizedBox(height: 20),
 
                     // Información adicional (visible al expandir)
@@ -479,6 +666,41 @@ class _NavigationScreenState extends State<NavigationScreen> {
             _buildInfoRow(Icons.directions_walk, '${_formatDistance(_distanceToEnd)} restantes'),
           const SizedBox(height: 8),
           _buildInfoRow(Icons.schedule, 'Tiempo estimado: ${_formatTime(_distanceToEnd)}'),
+          
+          const Divider(height: 20, thickness: 1),
+          
+          // Información de tracking
+          Row(
+            children: [
+              Icon(
+                _isWsConnected ? Icons.cloud_done : Icons.cloud_off,
+                size: 20,
+                color: _isWsConnected ? Colors.green : Colors.red,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _isWsConnected 
+                    ? 'Tracking: ${_isTrackingPaused ? "Pausado" : "Activo"}'
+                    : 'Sin conexión al servidor',
+                  style: const TextStyle(fontSize: 15),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Icon(Icons.access_time, size: 20, color: Color(0xFF148040)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Última sincronización: $_lastSyncTime',
+                  style: const TextStyle(fontSize: 15),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
