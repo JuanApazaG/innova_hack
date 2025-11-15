@@ -65,6 +65,7 @@ flutter:
   assets:
     - assets/logos/logo_emacruz.png
     - assets/logos/logo_swisscontact.png
+    - assets/logos/logo_ciudades_circulates.png
     - assets/images/
 
   # An image asset can refer to one or more resolution-specific "variants", see
