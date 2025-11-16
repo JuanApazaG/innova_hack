@@ -43,6 +43,11 @@ class _NavigationScreenState extends State<NavigationScreen> {
   bool _isOffRoute = false;
   double _distanceToRoute = 0.0;
   DateTime? _lastOffRouteAlert;
+  
+  // Cronómetro de ruta
+  DateTime? _routeStartTime;
+  Duration _elapsedTime = Duration.zero;
+  Timer? _stopwatchTimer;
 
   @override
   void initState() {
@@ -58,8 +63,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
     // Marcar que se está cerrando para evitar reconexiones
     _isClosing = true;
     
-    // Cancelar timer primero
+    // Cancelar timers
     _locationTimer?.cancel();
+    _stopwatchTimer?.cancel();
     
     // Cancelar stream de ubicación
     _positionStream?.cancel();
@@ -113,9 +119,22 @@ class _NavigationScreenState extends State<NavigationScreen> {
       _statusMessage = 'Siguiendo la ruta';
     });
 
+    _startRouteStopwatch();
     _startLocationTracking();
   }
 
+  void _startRouteStopwatch() {
+    _routeStartTime = DateTime.now();
+    _stopwatchTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted) {
+        setState(() {
+          _elapsedTime = DateTime.now().difference(_routeStartTime!);
+        });
+      }
+    });
+    print('⏱️ Cronómetro iniciado');
+  }
+  
   void _startLocationTracking() {
     const LocationSettings locationSettings = LocationSettings(
       accuracy: LocationAccuracy.high,
@@ -410,6 +429,20 @@ class _NavigationScreenState extends State<NavigationScreen> {
       return '$minutes min';
     }
   }
+  
+  String _formatElapsedTime() {
+    final hours = _elapsedTime.inHours;
+    final minutes = _elapsedTime.inMinutes.remainder(60);
+    final seconds = _elapsedTime.inSeconds.remainder(60);
+    
+    if (hours > 0) {
+      return '${hours}h ${minutes}m';
+    } else if (minutes > 0) {
+      return '${minutes}m ${seconds}s';
+    } else {
+      return '${seconds}s';
+    }
+  }
 
   // ============ WEBSOCKET TRACKING ============
   
@@ -635,7 +668,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
                   const Icon(Icons.access_time, color: Color(0xFF148040), size: 22),
                   const SizedBox(width: 6),
                   Text(
-                    _formatTime(_distanceToEnd),
+                    _formatElapsedTime(),
                     style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                   ),
                 ],
@@ -1116,6 +1149,15 @@ class _NavigationScreenState extends State<NavigationScreen> {
   void _showSuccessModal() async {
     // Marcar que se está cerrando para evitar reconexiones
     _isClosing = true;
+    
+    // Detener cronómetro y registrar tiempo final
+    _stopwatchTimer?.cancel();
+    final totalTime = _elapsedTime;
+    print('⏱️ Ruta completada en: ${_formatElapsedTime()}');
+    print('⏱️ Tiempo total en segundos: ${totalTime.inSeconds}');
+    
+    // TODO: Aquí puedes enviar el tiempo al servidor si lo necesitas
+    // await _sendRouteCompletionTime(totalTime);
     
     // Limpiar recursos antes de navegar
     print('🧹 Limpiando recursos antes de navegar...');
