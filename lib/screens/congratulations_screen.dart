@@ -53,18 +53,6 @@ class _CongratulationsScreenState extends State<CongratulationsScreen> {
           textAlign: TextAlign.center,
         ),
         
-        const SizedBox(height: 16),
-        
-        // Subtítulo
-        Text(
-          'Completaste la ruta:\n${widget.route.name}',
-          style: const TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w500,
-            color: Colors.black87,
-          ),
-          textAlign: TextAlign.center,
-        ),
         
         const SizedBox(height: 48),
         

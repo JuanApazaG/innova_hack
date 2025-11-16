@@ -37,7 +37,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
   String _lastSyncTime = 'Sin sincronizar';
   Timer? _locationTimer;
   bool _isTrackingPaused = false;
-  static const String _userId = '6918c21792cd6492dbd79515'; // Agustin Apaza
+  static const String _userId = '6918e49c92cd6492dbd7953c'; // Agustin Apaza
   
   // Detección de desviación de ruta
   bool _isOffRoute = false;
