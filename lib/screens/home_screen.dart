@@ -37,7 +37,7 @@ class _HomeScreenState extends State<HomeScreen> {
         // TODO: El backend debe enviar el ID de la ruta asignada al usuario
         if (rutas.isNotEmpty) {
           setState(() {
-            rutaAsignada = RouteModel.fromJson(rutas[1]);
+            rutaAsignada = RouteModel.fromJson(rutas[2]);
             isLoading = false;
           });
         } else {
