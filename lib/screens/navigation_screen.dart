@@ -33,6 +33,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
   // WebSocket tracking
   WebSocketChannel? _wsChannel;
   bool _isWsConnected = false;
+  bool _isClosing = false; // Flag para evitar reconexiones durante cierre
   String _lastSyncTime = 'Sin sincronizar';
   Timer? _locationTimer;
   bool _isTrackingPaused = false;
@@ -52,11 +53,28 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   @override
   void dispose() {
+    print('🧹 NavigationScreen dispose() llamado');
+    
+    // Marcar que se está cerrando para evitar reconexiones
+    _isClosing = true;
+    
+    // Cancelar timer primero
+    _locationTimer?.cancel();
+    
+    // Cancelar stream de ubicación
     _positionStream?.cancel();
+    
+    // Cerrar WebSocket de forma segura
+    try {
+      _wsChannel?.sink.close();
+    } catch (e) {
+      print('⚠️ Error al cerrar WebSocket en dispose: $e');
+    }
+    
+    // Liberar controladores
     _mapController?.dispose();
     _sheetController.dispose();
-    _locationTimer?.cancel();
-    _wsChannel?.sink.close();
+    
     super.dispose();
   }
 
@@ -349,7 +367,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
     try {
       print('\n📱 Enviando notificación a Telegram...');
       final webhookResponse = await http.post(
-        Uri.parse('https://n8n.juanagustinapaza.me/webhook-test/notificacion'),
+        Uri.parse('https://n8n.juanagustinapaza.me/webhook/notificacion'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
           'route_id': widget.route.id,
@@ -482,7 +500,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   void _reconnectWebSocket() {
     Future.delayed(const Duration(seconds: 1), () {
-      if (mounted && !_isWsConnected) {
+      if (mounted && !_isWsConnected && !_isClosing) {
         print('Attempting to reconnect WebSocket...');
         _connectWebSocket();
       }
@@ -687,15 +705,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
                     fontWeight: FontWeight.bold,
                     color: Color(0xFF148040),
                     letterSpacing: 0.5,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '${_formatDistance(_distanceToEnd)} restantes',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.grey[600],
-                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ],
@@ -1006,6 +1015,31 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
                     const SizedBox(height: 16),
 
+                    // Botón "TERMINAR RUTA"
+                    SizedBox(
+                      width: double.infinity,
+                      height: 64,
+                      child: ElevatedButton(
+                        onPressed: _showFinishConfirmation,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF148040),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'TERMINAR RUTA',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
                     // Botón "CANCELAR RUTA"
                     SizedBox(
                       width: double.infinity,
@@ -1079,14 +1113,40 @@ class _NavigationScreenState extends State<NavigationScreen> {
     );
   }
 
-  void _showSuccessModal() {
+  void _showSuccessModal() async {
+    // Marcar que se está cerrando para evitar reconexiones
+    _isClosing = true;
+    
+    // Limpiar recursos antes de navegar
+    print('🧹 Limpiando recursos antes de navegar...');
+    
+    // Cancelar timer de ubicación
+    _locationTimer?.cancel();
+    
+    // Cerrar WebSocket de forma segura
+    try {
+      await _wsChannel?.sink.close();
+      print('✅ WebSocket cerrado correctamente');
+    } catch (e) {
+      print('⚠️ Error al cerrar WebSocket: $e');
+    }
+    
+    // Cancelar stream de ubicación
+    await _positionStream?.cancel();
+    print('✅ Stream de ubicación cancelado');
+    
+    // Pequeña pausa para asegurar que todo se limpió
+    await Future.delayed(const Duration(milliseconds: 300));
+    
     // Navegar a la pantalla de felicitaciones
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (context) => CongratulationsScreen(route: widget.route),
-      ),
-    );
+    if (mounted) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => CongratulationsScreen(route: widget.route),
+        ),
+      );
+    }
   }
 
   void _showProblemReport() {
