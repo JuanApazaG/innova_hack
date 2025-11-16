@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/route_model.dart';
 import 'navigation_screen.dart';
 
@@ -150,10 +151,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     _buildLogo(
                       'assets/logos/logo_swisscontact.png',
                       'Swisscontact',
+                      url: 'https://www.swisscontact.org/es',
                     ),
                     _buildLogo(
                       'assets/logos/logo_emacruz.png',
                       'Emacruz',
+                      url: 'https://www.emacruz.com.bo/',
                     ),
                     _buildLogo(
                       'assets/logos/logo_ciudades_circulates.png',
@@ -169,8 +172,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildLogo(String assetPath, String label) {
-    return Container(
+  Widget _buildLogo(String assetPath, String label, {String? url}) {
+    Widget logoWidget = Container(
       height: 80,
       width: 90,
       padding: const EdgeInsets.all(6),
@@ -203,6 +206,33 @@ class _HomeScreenState extends State<HomeScreen> {
         },
       ),
     );
+    
+    // Si tiene URL, hacer que sea clickable
+    if (url != null) {
+      return InkWell(
+        onTap: () => _launchURL(url),
+        borderRadius: BorderRadius.circular(8),
+        child: logoWidget,
+      );
+    }
+    
+    return logoWidget;
+  }
+  
+  Future<void> _launchURL(String urlString) async {
+    final url = Uri.parse(urlString);
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('No se pudo abrir el enlace: $urlString'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildSaludo() {
