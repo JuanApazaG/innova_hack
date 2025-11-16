@@ -220,7 +220,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             children: [
               TextSpan(
-                text: 'Hola Luis Romero',
+                text: 'Hola Sheila Rojas',
                 style: TextStyle(color: Color(0xFF3C8F4F)),
               ),
             ],
