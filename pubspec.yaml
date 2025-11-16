@@ -38,6 +38,8 @@ dependencies:
   google_maps_flutter: ^2.6.1
   geolocator: ^14.0.2
   web_socket_channel: ^3.0.0
+  vibration: ^2.0.0
+  audioplayers: ^6.1.0
 
 dev_dependencies:
   flutter_test:
@@ -68,6 +70,10 @@ flutter:
     - assets/logos/logo_swisscontact.png
     - assets/logos/logo_ciudades_circulates.png
     - assets/images/
+    - assets/images/progreso.png
+    - assets/images/felicidades.png
+    - assets/sounds/
+    - assets/sounds/notificacion.mp3
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

@@ -3,8 +3,13 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:vibration/vibration.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:http/http.dart' as http;
 import '../models/route_model.dart';
+import 'congratulations_screen.dart';
 
 class NavigationScreen extends StatefulWidget {
   final RouteModel route;
@@ -32,6 +37,11 @@ class _NavigationScreenState extends State<NavigationScreen> {
   Timer? _locationTimer;
   bool _isTrackingPaused = false;
   static const String _userId = '6918c21792cd6492dbd79515'; // Agustin Apaza
+  
+  // Detección de desviación de ruta
+  bool _isOffRoute = false;
+  double _distanceToRoute = 0.0;
+  DateTime? _lastOffRouteAlert;
 
   @override
   void initState() {
@@ -122,6 +132,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
       } else {
         _statusMessage = 'Siguiendo la ruta';
       }
+      
+      // Verificar si se salió de la ruta
+      _checkIfOffRoute(position);
     });
 
     // Mover la cámara del mapa para seguir al usuario
@@ -130,6 +143,235 @@ class _NavigationScreenState extends State<NavigationScreen> {
         LatLng(position.latitude, position.longitude),
       ),
     );
+  }
+  
+  // Verificar si el usuario se salió de la ruta
+  void _checkIfOffRoute(Position position) {
+    if (widget.route.coordinates.length < 2) return;
+    
+    // Calcular distancia mínima a la polilínea de la ruta
+    double minDistance = double.infinity;
+    
+    for (int i = 0; i < widget.route.coordinates.length - 1; i++) {
+      final point1 = widget.route.coordinates[i];
+      final point2 = widget.route.coordinates[i + 1];
+      
+      final distance = _distanceToLineSegment(
+        LatLng(position.latitude, position.longitude),
+        point1,
+        point2,
+      );
+      
+      if (distance < minDistance) {
+        minDistance = distance;
+      }
+    }
+    
+    _distanceToRoute = minDistance;
+    
+    // Tolerancia: 25 metros para activar, 20 metros para desactivar (histéresis)
+    if (!_isOffRoute && minDistance > 25) {
+      // Se salió de la ruta
+      _isOffRoute = true;
+      _showOffRouteAlert();
+    } else if (_isOffRoute && minDistance < 20) {
+      // Regresó a la ruta
+      _isOffRoute = false;
+    }
+  }
+  
+  // Calcular distancia de un punto a un segmento de línea
+  double _distanceToLineSegment(LatLng point, LatLng lineStart, LatLng lineEnd) {
+    // Convertir a coordenadas cartesianas aproximadas (en metros)
+    final x = point.longitude;
+    final y = point.latitude;
+    final x1 = lineStart.longitude;
+    final y1 = lineStart.latitude;
+    final x2 = lineEnd.longitude;
+    final y2 = lineEnd.latitude;
+    
+    final A = x - x1;
+    final B = y - y1;
+    final C = x2 - x1;
+    final D = y2 - y1;
+    
+    final dot = A * C + B * D;
+    final lenSq = C * C + D * D;
+    double param = -1;
+    
+    if (lenSq != 0) {
+      param = dot / lenSq;
+    }
+    
+    double xx, yy;
+    
+    if (param < 0) {
+      xx = x1;
+      yy = y1;
+    } else if (param > 1) {
+      xx = x2;
+      yy = y2;
+    } else {
+      xx = x1 + param * C;
+      yy = y1 + param * D;
+    }
+    
+    // Calcular distancia en metros usando Haversine
+    return Geolocator.distanceBetween(point.latitude, point.longitude, yy, xx);
+  }
+  
+  // Mostrar alerta de desviación
+  void _showOffRouteAlert() {
+    // Evitar alertas repetitivas (cooldown de 10 segundos)
+    if (_lastOffRouteAlert != null &&
+        DateTime.now().difference(_lastOffRouteAlert!) < const Duration(seconds: 10)) {
+      return;
+    }
+    
+    _lastOffRouteAlert = DateTime.now();
+    
+    // Enviar alerta al servidor
+    _sendAlertToServer();
+    
+    // Vibrar el teléfono
+    _vibratePhone();
+    
+    // Mostrar banner de alerta
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 28),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      '⚠️ TE SALISTE DE LA RUTA',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    Text(
+                      'Estás a ${_distanceToRoute.round()}m de la ruta',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.red[700],
+          duration: const Duration(seconds: 5),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          action: SnackBarAction(
+            label: 'ENTENDIDO',
+            textColor: Colors.white,
+            onPressed: () {
+              // Cerrar el snackbar
+            },
+          ),
+        ),
+      );
+    }
+  }
+  
+  // Vibrar el teléfono y reproducir sonido de alerta
+  Future<void> _vibratePhone() async {
+    // Reproducir sonido de notificación 5 veces
+    final player = AudioPlayer();
+    try {
+      for (int i = 0; i < 5; i++) {
+        await player.play(AssetSource('sounds/notificacion.mp3'));
+        // Esperar a que termine el sonido antes de reproducir el siguiente
+        await Future.delayed(const Duration(milliseconds: 1500));
+      }
+    } catch (e) {
+      print('Error al reproducir sonido: $e');
+    }
+    
+    // Vibrar el teléfono
+    final hasVibrator = await Vibration.hasVibrator();
+    if (hasVibrator == true) {
+      // Patrón: vibrar 500ms, pausar 200ms, vibrar 500ms
+      Vibration.vibrate(duration: 500);
+      await Future.delayed(const Duration(milliseconds: 700));
+      Vibration.vibrate(duration: 500);
+    }
+  }
+  
+  // Enviar alerta al servidor cuando se sale de la ruta
+  Future<void> _sendAlertToServer() async {
+    print('🚨 Enviando alerta al servidor...');
+    print('   User ID: $_userId');
+    print('   Route ID: ${widget.route.id}');
+    
+    // 1. Enviar al endpoint de alertas principal
+    try {
+      final response = await http.post(
+        Uri.parse('https://innovahack.onrender.com/api/alerts/'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'route_id': widget.route.id,
+          'user_id': _userId,
+        }),
+      );
+      
+      print('📡 Respuesta del servidor principal:');
+      print('   Status: ${response.statusCode}');
+      print('   Body: ${response.body}');
+      
+      if (response.statusCode == 201) {
+        print('✅ Alerta enviada exitosamente al servidor principal');
+        final data = json.decode(response.body);
+        print('   Mensaje: ${data['message']}');
+        print('   Usuario: ${data['name_user']}');
+        print('   Ruta: ${data['route_name']}');
+      } else {
+        print('❌ Error al enviar alerta al servidor principal: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('❌ Error enviando alerta al servidor principal: $e');
+    }
+    
+    // 2. Enviar al webhook de Telegram (n8n)
+    try {
+      print('\n📱 Enviando notificación a Telegram...');
+      final webhookResponse = await http.post(
+        Uri.parse('https://n8n.juanagustinapaza.me/webhook-test/notificacion'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'route_id': widget.route.id,
+          'user_id': _userId,
+          'message': 'Se desvió de su ruta',
+          'route_name': widget.route.name,
+          'distance': _distanceToRoute.round(),
+        }),
+      );
+      
+      print('📡 Respuesta del webhook Telegram:');
+      print('   Status: ${webhookResponse.statusCode}');
+      print('   Body: ${webhookResponse.body}');
+      
+      if (webhookResponse.statusCode == 200 || webhookResponse.statusCode == 201) {
+        print('✅ Notificación enviada exitosamente a Telegram');
+      } else {
+        print('❌ Error al enviar notificación a Telegram: ${webhookResponse.statusCode}');
+      }
+    } catch (e) {
+      print('❌ Error enviando notificación a Telegram: $e');
+    }
   }
 
   String _formatDistance(double meters) {
@@ -213,7 +455,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   void _startLocationTimer() {
     _locationTimer?.cancel();
-    _locationTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+    _locationTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!_isTrackingPaused && _currentPosition != null && _isWsConnected) {
         _sendLocationToServer();
       }
@@ -239,7 +481,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
   }
 
   void _reconnectWebSocket() {
-    Future.delayed(const Duration(seconds: 5), () {
+    Future.delayed(const Duration(seconds: 1), () {
       if (mounted && !_isWsConnected) {
         print('Attempting to reconnect WebSocket...');
         _connectWebSocket();
@@ -356,24 +598,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(
-                _isWithinFinishRadius ? Icons.check_circle : Icons.navigation,
-                color: _isWithinFinishRadius ? const Color(0xFF148040) : const Color(0xFFF75307),
-                size: 24,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                _statusMessage,
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: _isWithinFinishRadius ? const Color(0xFF148040) : Colors.black,
-                ),
-              ),
-            ],
-          ),
           const SizedBox(height: 12),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -400,48 +624,14 @@ class _NavigationScreenState extends State<NavigationScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: LinearProgressIndicator(
-              value: _calculateProgress(),
-              minHeight: 12,
-              backgroundColor: Colors.grey[300],
-              valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF148040)),
-            ),
-          ),
+          const SizedBox(height: 16),
           
-          // Indicador de conexión WebSocket
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Container(
-                width: 10,
-                height: 10,
-                decoration: BoxDecoration(
-                  color: _isWsConnected ? Colors.green : Colors.red,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                _isWsConnected ? 'Tracking activo' : 'Desconectado',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: _isWsConnected ? Colors.green[700] : Colors.red[700],
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const Spacer(),
-              Text(
-                _lastSyncTime,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey[600],
-                ),
-              ),
-            ],
-          ),
+          // Barra de progreso profesional con imagen personalizada
+          _buildCustomProgressBar(),
+          
+          const SizedBox(height: 16),
+          
+          
         ],
       ),
     );
@@ -461,14 +651,254 @@ class _NavigationScreenState extends State<NavigationScreen> {
     return progress.clamp(0.0, 1.0);
   }
 
+  Widget _buildCustomProgressBar() {
+    final progress = _calculateProgress();
+    final percentage = (progress * 100).round();
+    
+    return Column(
+      children: [
+        // Línea superior con info
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            // INICIO
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'INICIO',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[700],
+                    letterSpacing: 1,
+                  ),
+                ),
+              ],
+            ),
+            
+            // Porcentaje y distancia (centro)
+            Column(
+              children: [
+                Text(
+                  '$percentage%',
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF148040),
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${_formatDistance(_distanceToEnd)} restantes',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+            
+            // FINAL
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  'FINAL',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[700],
+                    letterSpacing: 1,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        
+        const SizedBox(height: 12),
+        
+        // Barra de progreso con imagen personalizada
+        SizedBox(
+          height: 40,
+          child: Stack(
+            alignment: Alignment.center,
+            clipBehavior: Clip.none,
+            children: [
+              // Contenedor de la línea de progreso
+              Positioned(
+                left: 16,
+                right: 16,
+                child: Stack(
+                  children: [
+                    // Línea de fondo (gris claro)
+                    Container(
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                    
+                    // Línea de progreso (verde con gradiente)
+                    FractionallySizedBox(
+                      widthFactor: progress,
+                      child: Container(
+                        height: 8,
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [
+                              Color(0xFF0d5c2e),
+                              Color(0xFF148040),
+                              Color(0xFF1ea34f),
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(4),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF148040).withOpacity(0.4),
+                              blurRadius: 6,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              
+              // Icono de bandera INICIO (verde)
+              Positioned(
+                left: 6,
+                child: Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF148040),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 3),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.25),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.flag,
+                    color: Colors.white,
+                    size: 14,
+                  ),
+                ),
+              ),
+              
+              // Icono de pin FINAL (rojo)
+              Positioned(
+                right: 6,
+                child: Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFdc3545),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 3),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.25),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.location_on,
+                    color: Colors.white,
+                    size: 14,
+                  ),
+                ),
+              ),
+              
+              // IMAGEN PERSONALIZADA - Marcador de posición actual
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 500),
+                curve: Curves.easeInOut,
+                left: _calculateImagePosition(progress),
+                child: TweenAnimationBuilder<double>(
+                  tween: Tween(begin: 0.9, end: 1.0),
+                  duration: const Duration(milliseconds: 600),
+                  builder: (context, scale, child) {
+                    return Transform.scale(
+                      scale: scale,
+                      child: Container(
+                        width: 48,
+                        height: 48,
+                        child: ClipOval(
+                          child: Image.asset(
+                            'assets/images/progreso.png',
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              // Fallback si la imagen no carga
+                              return Container(
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFFF75307),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.navigation,
+                                  color: Colors.white,
+                                  size: 24,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                  onEnd: () {
+                    // Repetir animación de escala
+                    if (mounted) {
+                      Future.delayed(const Duration(milliseconds: 100), () {
+                        if (mounted) setState(() {});
+                      });
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  double _calculateImagePosition(double progress) {
+    // Calcular posición de la imagen en la barra
+    // Considerando el ancho de la pantalla y los márgenes
+    final screenWidth = MediaQuery.of(context).size.width;
+    final cardPadding = 40.0; // 20px de cada lado
+    final availableWidth = screenWidth - cardPadding - 64; // 64 = espacio para iconos
+    
+    // La imagen debe moverse entre los iconos (posición 28 a availableWidth - 28)
+    final minPosition = 28.0;
+    final maxPosition = availableWidth - 20;
+    
+    return minPosition + (progress * (maxPosition - minPosition));
+  }
+
   Widget _buildDraggableBottomSheet() {
     return DraggableScrollableSheet(
       controller: _sheetController,
-      initialChildSize: 0.30, // 30% de la pantalla inicialmente
-      minChildSize: 0.15, // Mínimo 15% (modo colapsado)
-      maxChildSize: 0.60, // Máximo 60% (modo expandido)
+      initialChildSize: 0.25, // 25% de la pantalla inicialmente
+      minChildSize: 0.12, // Mínimo 12% (modo colapsado)
+      maxChildSize: 0.40, // Máximo 40% (modo expandido)
       snap: true,
-      snapSizes: const [0.15, 0.30, 0.60], // Puntos de anclaje
+      snapSizes: const [0.12, 0.25, 0.40], // Puntos de anclaje
       builder: (BuildContext context, ScrollController scrollController) {
         return Container(
           decoration: BoxDecoration(
@@ -597,40 +1027,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
                         ),
                       ),
                     ),
-
-                    const SizedBox(height: 16),
-
-                    // Botón "PAUSAR/REANUDAR TRACKING"
-                    SizedBox(
-                      width: double.infinity,
-                      height: 56,
-                      child: OutlinedButton.icon(
-                        onPressed: _toggleTracking,
-                        icon: Icon(_isTrackingPaused ? Icons.play_arrow : Icons.pause),
-                        label: Text(
-                          _isTrackingPaused ? 'REANUDAR TRACKING' : 'PAUSAR TRACKING',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          side: BorderSide(
-                            color: _isTrackingPaused ? Colors.green : Colors.orange,
-                            width: 2,
-                          ),
-                          foregroundColor: _isTrackingPaused ? Colors.green : Colors.orange,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    // Información adicional (visible al expandir)
-                    _buildRouteInfo(),
                   ],
                 ),
               ),
@@ -638,86 +1034,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
           ),
         );
       },
-    );
-  }
-
-  Widget _buildRouteInfo() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.7),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Información de la ruta',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.black,
-            ),
-          ),
-          const SizedBox(height: 12),
-          _buildInfoRow(Icons.location_on, '${widget.route.pointCount} puntos en la ruta'),
-          const SizedBox(height: 8),
-          if (_currentPosition != null)
-            _buildInfoRow(Icons.directions_walk, '${_formatDistance(_distanceToEnd)} restantes'),
-          const SizedBox(height: 8),
-          _buildInfoRow(Icons.schedule, 'Tiempo estimado: ${_formatTime(_distanceToEnd)}'),
-          
-          const Divider(height: 20, thickness: 1),
-          
-          // Información de tracking
-          Row(
-            children: [
-              Icon(
-                _isWsConnected ? Icons.cloud_done : Icons.cloud_off,
-                size: 20,
-                color: _isWsConnected ? Colors.green : Colors.red,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  _isWsConnected 
-                    ? 'Tracking: ${_isTrackingPaused ? "Pausado" : "Activo"}'
-                    : 'Sin conexión al servidor',
-                  style: const TextStyle(fontSize: 15),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              const Icon(Icons.access_time, size: 20, color: Color(0xFF148040)),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Última sincronización: $_lastSyncTime',
-                  style: const TextStyle(fontSize: 15),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoRow(IconData icon, String text) {
-    return Row(
-      children: [
-        Icon(icon, size: 20, color: const Color(0xFF148040)),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            text,
-            style: const TextStyle(fontSize: 16),
-          ),
-        ),
-      ],
     );
   }
 
@@ -764,50 +1080,12 @@ class _NavigationScreenState extends State<NavigationScreen> {
   }
 
   void _showSuccessModal() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text(
-            '¡Ruta completada! 🎉',
-            style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
-            textAlign: TextAlign.center,
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Has completado la ruta de recolección.',
-                style: TextStyle(fontSize: 18),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Ruta: ${widget.route.name}',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-          actions: [
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                Navigator.pop(context);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFF75307),
-                minimumSize: const Size(double.infinity, 56),
-              ),
-              child: const Text(
-                'VOLVER AL INICIO',
-                style: TextStyle(fontSize: 20, color: Colors.white),
-              ),
-            ),
-          ],
-        );
-      },
+    // Navegar a la pantalla de felicitaciones
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CongratulationsScreen(route: widget.route),
+      ),
     );
   }
 
