@@ -1,4 +1,4 @@
-name: innova_hack
+name: emacruz_app
 description: "A new Flutter project."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -52,6 +52,8 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.13.1
+  flutter_native_splash: ^2.4.0
   
 
 # For information on the generic Dart part of this file, see the
@@ -73,6 +75,8 @@ flutter:
     - assets/images/
     - assets/images/progreso.png
     - assets/images/felicidades.png
+    - assets/images/icono.png
+    - assets/images/icono1.png
     - assets/sounds/
     - assets/sounds/notificacion.mp3
 
@@ -101,3 +105,25 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# Configuración del ícono de la app
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/images/icono1.png"
+  adaptive_icon_foreground: "assets/images/icono1.png"
+  adaptive_icon_background: "#FFFFFF"
+  min_sdk_android: 21
+  remove_alpha_ios: true
+
+# Configuración de la pantalla de carga (splash screen)
+flutter_native_splash:
+  color: "#F4EFE3"
+  image: "assets/images/icono1.png"
+  android: true
+  ios: false
+  android_12:
+    color: "#F4EFE3"
+    image: "assets/images/icono1.png"
+  android_gravity: center
+  fullscreen: true
