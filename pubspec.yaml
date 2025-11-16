@@ -42,6 +42,7 @@ dependencies:
   audioplayers: ^6.1.0
   image_picker: ^1.0.7
   url_launcher: ^6.2.5
+  flutter_dotenv: ^5.1.0
 
 dev_dependencies:
   flutter_test:
@@ -70,6 +71,7 @@ flutter:
 
   # To add assets to your application, add an assets section, like this:
   assets:
+    - .env
     - assets/logos/logo_emacruz.png
     - assets/logos/logo_swisscontact.png
     - assets/logos/logo_ciudades_circulates.png
